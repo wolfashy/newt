@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.ethanash.newt-bridge</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/adminx/Desktop/jarvis</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/adminx/Desktop/jarvis/venv/bin/python</string>
+        <string>/Users/adminx/Desktop/jarvis/newt_bridge.py</string>
+    </array>
+
+    <!-- Start at login; restart if it crashes -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Don't hammer it if it crashes in a loop -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Logs to tail if it misbehaves -->
+    <key>StandardOutPath</key>
+    <string>/Users/adminx/Desktop/jarvis/newt-bridge.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/adminx/Desktop/jarvis/newt-bridge.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/adminx/Desktop/jarvis/venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

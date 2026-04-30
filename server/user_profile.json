@@ -1,0 +1,116 @@
+{
+  "name": "Ethan",
+  "preferences": [
+    "Geelong location"
+  ],
+  "habits": [],
+  "topics_of_interest": [
+    "programming and AI development",
+    "programming and AI development",
+    "coding",
+    "integrating free APIs",
+    "coding projects",
+    "coding projects",
+    "coding projects",
+    "programming and AI development",
+    "coding",
+    "APIs and integrating with language models",
+    "language capabilities and natural language processing",
+    "coding",
+    "coding",
+    "coding",
+    "coding",
+    "coding",
+    "coding",
+    "coding",
+    "coding",
+    "coding",
+    "news",
+    "programming",
+    "coding",
+    "coding",
+    "coding",
+    "programming",
+    "programming and AI development",
+    "coding",
+    "coding"
+  ],
+  "mood_history": [
+    {
+      "time": "2026-04-12T13:38:14.871590",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-12T13:38:44.725536",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-12T14:06:15.990761",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-12T14:06:52.507097",
+      "mood": "excited"
+    },
+    {
+      "time": "2026-04-12T14:07:31.141268",
+      "mood": "needs_help"
+    },
+    {
+      "time": "2026-04-12T14:20:44.290382",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-12T14:49:46.517387",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-12T14:50:29.986410",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-12T14:50:43.034364",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-12T15:04:22.323562",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-12T16:32:53.118922",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-12T16:33:11.356211",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-12T16:33:37.949208",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-15T07:40:00.859642",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-15T07:40:08.857573",
+      "mood": "neutral"
+    },
+    {
+      "time": "2026-04-19T20:24:03.446355",
+      "mood": "neutral"
+    }
+  ],
+  "facts_learned": [
+    "working on projects, possibly integrating APIs",
+    "had 36 conversations with the assistant",
+    "working on projects, possibly integrating APIs",
+    "lives in Geelong",
+    "uses a Mac",
+    "uses a Mac"
+  ],
+  "conversation_count": 52,
+  "created": "2026-04-10T13:45:02.711579",
+  "hue_bridge_ip": "192.168.1.7",
+  "city": "Geelong"
+}

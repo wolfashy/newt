@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleGetInfoString</key>
+	<string></string>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Newt uses the microphone for push-to-talk so you can speak to it.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Newt schedules events and reads your upcoming agenda when you ask.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Newt schedules events and reads your upcoming agenda when you ask.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Newt creates and reads your reminders when you ask.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Newt creates and reads your reminders when you ask.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Newt uses speech recognition for hands-free wake-word activation.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Newt looks up contacts when you ask it to text someone, so the right phone number is pre-filled.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Newt uses the camera so you can show it things and ask "what's this?".</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Newt uses your photo library so you can pick images to ask about or send to your Mac.</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<!-- Music & video -->
+		<string>spotify</string>
+		<string>youtube</string>
+		<string>youtubemusic</string>
+		<string>music</string>
+		<string>nflx</string>
+		<string>disneyplus</string>
+		<string>videos</string>
+		<string>hbomax</string>
+		<string>twitch</string>
+		<string>pcast</string>
+		<!-- Communication -->
+		<string>googlegmail</string>
+		<string>ms-outlook</string>
+		<string>slack</string>
+		<string>discord</string>
+		<string>whatsapp</string>
+		<string>tg</string>
+		<string>sgnl</string>
+		<string>zoomus</string>
+		<string>msteams</string>
+		<string>facetime</string>
+		<!-- Maps -->
+		<string>comgooglemaps</string>
+		<string>waze</string>
+		<string>uber</string>
+		<string>lyft</string>
+		<!-- Social -->
+		<string>instagram</string>
+		<string>twitter</string>
+		<string>barcelona</string>
+		<string>snssdk1233</string>
+		<string>fb</string>
+		<string>reddit</string>
+		<string>linkedin</string>
+		<string>snapchat</string>
+		<!-- AI -->
+		<string>chatgpt</string>
+		<string>claude</string>
+		<string>perplexity</string>
+		<string>googlegemini</string>
+		<!-- Browsers -->
+		<string>googlechrome</string>
+		<string>firefox</string>
+		<string>microsoft-edge</string>
+		<string>brave</string>
+		<!-- Productivity / utility -->
+		<string>shortcuts</string>
+		<string>notion</string>
+		<string>obsidian</string>
+		<string>todoist</string>
+		<string>onepassword</string>
+		<string>bitwarden</string>
+		<string>github</string>
+		<!-- Money -->
+		<string>venmo</string>
+		<string>cashapp</string>
+		<string>paypal</string>
+	</array>
+</dict>
+</plist>

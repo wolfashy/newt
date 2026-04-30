@@ -1,0 +1,43 @@
+# --- Secrets / private data ---
+.env
+.env.local
+.env.*.local
+**/persona.json
+**/notes.md
+**/screen.png
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+venv.*/
+.venv/
+.python-version
+
+# --- Logs / runtime ---
+*.log
+**/inbox/
+**/chroma_db/
+**/chroma/
+**/.chromadb/
+**/*.bak-*
+**/*-snapshot.txt
+
+# --- macOS ---
+.DS_Store
+**/.DS_Store
+
+# --- Xcode ---
+build/
+DerivedData/
+**/xcuserdata/
+*.xcuserstate
+**/*.xcworkspace/xcuserdata/
+*.swp
+*.swo
+.swiftpm/
+
+# --- Misc ---
+AppIcon-1024.png

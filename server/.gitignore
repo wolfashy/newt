@@ -1,0 +1,10 @@
+.env
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+memory/*.sqlite3
+memory/*.sqlite3-journal
+session_logs/
+newt-bridge.log
+newt-bridge.err.log

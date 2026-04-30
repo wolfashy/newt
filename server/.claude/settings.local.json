@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('sample_rate:', d.get\\('audio',{}\\).get\\('sample_rate'\\)\\); print\\('quality:', d.get\\('quality'\\)\\)\")",
+      "Bash(python3:*)",
+      "Bash(ls /Users/adminx/Desktop/jarvis/*.py)"
+    ]
+  }
+}
