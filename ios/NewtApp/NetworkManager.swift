@@ -103,6 +103,101 @@ final class NetworkManager: ObservableObject {
         }.resume()
     }
 
+    // MARK: - Streaming chat (SSE)
+
+    /// POST /chat/stream and call `onChunk` for each text chunk as it arrives.
+    /// Calls `onComplete(action)` when [DONE] received (action may be nil).
+    /// Calls `onComplete(nil)` with an error chunk first if the stream errors.
+    ///
+    /// `history` is the last N user/assistant turns the bridge can use as
+    /// context — pass `[]` if you don't want any conversation memory.
+    /// `onToolBadge` fires when the agentic loop runs a tool (e.g. "🔍 Searching…").
+    func sendMessageStreaming(
+        _ message: String,
+        history: [(role: String, content: String)] = [],
+        onChunk: @escaping (String) -> Void,
+        onToolBadge: @escaping (String?) -> Void = { _ in },
+        onComplete: @escaping (_ action: [String: Any]?) -> Void
+    ) {
+        guard let url = URL(string: "\(baseURL)/chat/stream") else {
+            DispatchQueue.main.async {
+                onChunk("Invalid server URL")
+                onComplete(nil)
+            }
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+
+        let historyJson = history.map { ["role": $0.role, "content": $0.content] }
+        let body: [String: Any] = [
+            "prompt": message,
+            "history": historyJson,
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        Task {
+            do {
+                let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    await MainActor.run {
+                        onChunk("Stream failed (HTTP \(code))")
+                        onComplete(nil)
+                    }
+                    return
+                }
+
+                await MainActor.run { self.connection = .online }
+
+                var capturedAction: [String: Any]? = nil
+
+                for try await line in bytes.lines {
+                    // SSE format:  "data: <json>\n\n"
+                    guard line.hasPrefix("data: ") else { continue }
+                    let payload = String(line.dropFirst(6))
+
+                    if payload == "[DONE]" {
+                        break
+                    }
+
+                    guard let data = payload.data(using: .utf8),
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    else { continue }
+
+                    if let chunk = json["chunk"] as? String {
+                        await MainActor.run { onChunk(chunk) }
+                    }
+                    if let badge = json["tool"] as? String {
+                        await MainActor.run { onToolBadge(badge) }
+                    }
+                    if let action = json["action"] as? [String: Any] {
+                        capturedAction = action
+                    }
+                    if let err = json["error"] as? String {
+                        await MainActor.run { onChunk("\n[error: \(err)]") }
+                    }
+                }
+
+                // Fire-and-forget action handling (open_url etc.)
+                self.executeOpenURLIfPresent(capturedAction)
+
+                await MainActor.run { onComplete(capturedAction) }
+
+            } catch {
+                await MainActor.run {
+                    self.connection = .offline
+                    onChunk(Self.friendlyError(error))
+                    onComplete(nil)
+                }
+            }
+        }
+    }
+
     // MARK: - Voice in (push-to-talk)
 
     func sendAudio(_ fileURL: URL,

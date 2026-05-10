@@ -7,6 +7,16 @@ import Combine
 final class MessageStore: ObservableObject {
     @Published var messages: [Message] = []
 
+    /// In-progress streamed text from Newt. Renders as a temporary bubble
+    /// at the bottom of the chat while the stream is active. When the
+    /// stream finishes, call `commitStreaming()` to convert it to a real
+    /// Message that gets persisted.
+    @Published var streamingText: String?
+
+    /// The most recent agentic-tool badge ("🔍 Searching the web…").
+    /// Cleared when the next chunk of real text arrives.
+    @Published var toolBadge: String?
+
     private let fileURL: URL
     private static let MAX_MESSAGES = 500
 
@@ -28,7 +38,44 @@ final class MessageStore: ObservableObject {
 
     func clear() {
         messages.removeAll()
+        streamingText = nil
         save()
+    }
+
+    // MARK: - Streaming
+
+    /// Begin a streaming reply (clears any in-progress one).
+    func beginStreaming() {
+        streamingText = ""
+        toolBadge = nil
+    }
+
+    /// Append a chunk of streamed text. Clears any tool badge that was showing.
+    func appendChunk(_ chunk: String) {
+        streamingText = (streamingText ?? "") + chunk
+        toolBadge = nil
+    }
+
+    /// Show a "Newt is doing X…" badge while the agentic loop runs a tool.
+    func setToolBadge(_ badge: String?) {
+        toolBadge = badge
+    }
+
+    /// Finalize the stream — convert the in-progress text to a real Message.
+    func commitStreaming() {
+        toolBadge = nil
+        guard let text = streamingText, !text.isEmpty else {
+            streamingText = nil
+            return
+        }
+        append(Message(text: text, isUser: false))
+        streamingText = nil
+    }
+
+    /// Cancel without saving (e.g. on error).
+    func cancelStreaming() {
+        streamingText = nil
+        toolBadge = nil
     }
 
     // MARK: - Persistence

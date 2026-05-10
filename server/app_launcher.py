@@ -904,6 +904,556 @@ def _quote_of_the_day() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Groq client (OpenAI-API compatible, free tier)
+#
+# We use the openai package and just point it at Groq's base URL.
+# Models are picked from env or sensible defaults; override per-deployment
+# by setting GROQ_CHAT_MODEL / GROQ_VISION_MODEL in .env.
+# ---------------------------------------------------------------------------
+
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+# Llama 4 Scout is more reliable than 3.3-70b at OpenAI-format tool calls.
+GROQ_CHAT_MODEL   = os.environ.get("GROQ_CHAT_MODEL",   "meta-llama/llama-4-scout-17b-16e-instruct")
+GROQ_VISION_MODEL = os.environ.get("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+
+
+_TOOL_BADGES = {
+    "web_search":           "🔍 Searching the web",
+    "find_files":           "📁 Searching files",
+    "list_directory":       "📂 Reading folder",
+    "get_weather":          "🌤 Checking the weather",
+    "read_notes":           "📝 Reading your notes",
+    "save_note":            "✍️ Saving a note",
+    "get_persona":          "👤 Looking up your facts",
+    "read_running_apps":    "🖥 Checking what you're using",
+    "get_crypto_price":     "💰 Looking up crypto",
+    "get_time":             "🕒 Getting the time",
+    "calculate":            "🧮 Calculating",
+    "convert_currency":     "💱 Converting currency",
+    "get_news_headlines":   "📰 Fetching headlines",
+    "define_word":          "📖 Looking up the word",
+    "now_playing":          "🎵 Checking what's playing",
+    "set_reminder":         "⏰ Setting a reminder",
+    "start_timer":          "⏱ Starting a timer",
+    "compose_message":      "✉️ Drafting a message",
+    "create_calendar_event":"📅 Adding to your calendar",
+}
+
+
+def _friendly_tool_badge(tool_names) -> str:
+    """Map raw tool names to a single short user-facing badge string."""
+    pretty = []
+    for n in tool_names:
+        pretty.append(_TOOL_BADGES.get(n, f"⚙️ {n}"))
+    if len(pretty) == 1:
+        return pretty[0] + "…"
+    return " + ".join(pretty) + "…"
+
+
+def _parse_llama_tool_call(text: str) -> Tuple[Optional[str], Dict[str, Any]]:
+    """Extract a Llama-native tool call from a failed_generation string.
+    Format:  <function=NAME {json_args}</function>"""
+    m = re.search(r"<function=([A-Za-z_][\w]*)\s+(\{.*?\})\s*</function>", text, re.DOTALL)
+    if not m:
+        return None, {}
+    name = m.group(1)
+    try:
+        import json as _j
+        args = _j.loads(m.group(2))
+    except Exception:
+        args = {}
+    return name, args
+
+
+def _groq_client():
+    """Return an OpenAI-style client configured for Groq."""
+    from openai import OpenAI
+    key = os.environ.get("GROQ_API_KEY")
+    if not key:
+        raise RuntimeError("GROQ_API_KEY not set — add it to ~/newt/.env")
+    return OpenAI(api_key=key, base_url=GROQ_BASE_URL)
+
+
+# ---------------------------------------------------------------------------
+# Agentic tool loop — Newt can call these to gather info or take actions
+# ---------------------------------------------------------------------------
+
+AGENT_TOOLS = [
+    {"type": "function", "function": {
+        "name": "web_search",
+        "description": "Search the web for current information via DuckDuckGo. Returns a short summary or related topics. Use for current events, prices, definitions, factual lookups.",
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "Search query"}},
+            "required": ["query"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "find_files",
+        "description": "Search for files on Ethan's Mac by filename via Spotlight. Returns matching file paths.",
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "Filename or keyword"}},
+            "required": ["query"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "list_directory",
+        "description": "List the contents of a folder on Ethan's Mac. Common names: 'Downloads', 'Desktop', 'Documents'.",
+        "parameters": {
+            "type": "object",
+            "properties": {"folder": {"type": "string"}},
+            "required": ["folder"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "get_weather",
+        "description": "Get current local weather for Ethan's location (uses public IP geolocation).",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "read_notes",
+        "description": "Read recent notes Ethan has captured to ~/newt/notes.md. Useful when he asks about ideas or things he's noted before.",
+        "parameters": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "description": "How many recent notes (default 10)"}},
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "save_note",
+        "description": "Append a note to Ethan's notes file. Use sparingly — only when he explicitly asks to remember something note-worthy.",
+        "parameters": {
+            "type": "object",
+            "properties": {"content": {"type": "string"}},
+            "required": ["content"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "get_persona",
+        "description": "Get Ethan's persistent facts and preferred conversation tone. Use when context about Ethan would help your answer.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "read_running_apps",
+        "description": "Get the name of the app Ethan currently has in focus on his Mac.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "get_crypto_price",
+        "description": "Get the current USD price for a cryptocurrency. Pass the lowercase coin id like 'bitcoin', 'ethereum', 'solana', 'dogecoin'. Use this for real-time crypto prices instead of web_search.",
+        "parameters": {
+            "type": "object",
+            "properties": {"coin": {"type": "string", "description": "Lowercase coin id (bitcoin, ethereum, etc.)"}},
+            "required": ["coin"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "get_time",
+        "description": "Return the current local date and time.",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "calculate",
+        "description": "Evaluate a math expression like '30% of 1500', '2.5 * 8 + 3', 'sqrt(144)'. Use this for any arithmetic instead of guessing.",
+        "parameters": {
+            "type": "object",
+            "properties": {"expression": {"type": "string"}},
+            "required": ["expression"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "convert_currency",
+        "description": "Convert an amount between currencies. Codes are 3-letter ISO (USD, EUR, AUD, GBP, JPY, etc.).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "amount": {"type": "number"},
+                "from": {"type": "string", "description": "Source ISO currency code"},
+                "to":   {"type": "string", "description": "Target ISO currency code"},
+            },
+            "required": ["amount", "from", "to"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "get_news_headlines",
+        "description": "Top news headlines from BBC. Returns up to N recent stories.",
+        "parameters": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "description": "How many headlines (default 5)"}},
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "define_word",
+        "description": "Look up the definition of an English word.",
+        "parameters": {
+            "type": "object",
+            "properties": {"word": {"type": "string"}},
+            "required": ["word"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "now_playing",
+        "description": "What music is currently playing on Ethan's Mac (Spotify or Apple Music).",
+        "parameters": {"type": "object", "properties": {}},
+    }},
+    {"type": "function", "function": {
+        "name": "set_reminder",
+        "description": "Create a reminder on Ethan's iPhone via the Reminders app. Use this when he asks to be reminded about something.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "What to be reminded about"},
+                "due_iso": {"type": "string", "description": "Due time as ISO 8601 like 2026-05-07T17:00:00. Optional."},
+            },
+            "required": ["title"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "start_timer",
+        "description": "Start a timer on Ethan's iPhone that fires a notification when up.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "seconds": {"type": "integer", "description": "Duration in seconds"},
+                "label":   {"type": "string", "description": "Human-friendly duration like '10 minutes'"},
+            },
+            "required": ["seconds"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "compose_message",
+        "description": "Pre-fill an iMessage / SMS on Ethan's phone for a contact. Ethan will tap Send. Use for texting people.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "recipient": {"type": "string", "description": "Contact name (e.g. 'Mom', 'Sam')"},
+                "body":      {"type": "string", "description": "What the message should say"},
+            },
+            "required": ["recipient", "body"],
+        },
+    }},
+    {"type": "function", "function": {
+        "name": "create_calendar_event",
+        "description": "Add an event to Ethan's iPhone calendar.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title":  {"type": "string"},
+                "start":  {"type": "string", "description": "ISO 8601 start time"},
+                "end":    {"type": "string", "description": "ISO 8601 end time. Optional — defaults to 1h after start."},
+                "location": {"type": "string", "description": "Optional location"},
+            },
+            "required": ["title", "start"],
+        },
+    }},
+]
+
+
+def _agent_web_search(query: str) -> str:
+    """Call DuckDuckGo's instant-answer API. Free, no key. Limited but useful."""
+    import urllib.request, json as _json
+    if not query.strip():
+        return "Empty query."
+    try:
+        url = (f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}"
+               f"&format=json&no_html=1&skip_disambig=1")
+        req = urllib.request.Request(url, headers={"User-Agent": "newt"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = _json.loads(r.read().decode())
+        bits = []
+        if data.get("Answer"):       bits.append(f"Answer: {data['Answer']}")
+        if data.get("AbstractText"): bits.append(f"Summary: {data['AbstractText']}")
+        if data.get("AbstractURL"):  bits.append(f"Source: {data['AbstractURL']}")
+        topics = data.get("RelatedTopics") or []
+        for t in topics[:4]:
+            if isinstance(t, dict) and t.get("Text"):
+                bits.append(f"- {t['Text']}")
+        return "\n".join(bits) if bits else f"No instant answer for {query!r}. Try rephrasing."
+    except Exception as e:
+        return f"Search error: {e}"
+
+
+def _get_crypto_price(coin: str) -> str:
+    """CoinGecko free API. No key needed."""
+    import urllib.request, json as _json
+    coin = coin.strip().lower().replace(" ", "-")
+    if not coin:
+        return "Specify a coin (e.g. 'bitcoin')."
+    try:
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={urllib.parse.quote(coin)}&vs_currencies=usd&include_24hr_change=true"
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "newt"}), timeout=6) as r:
+            data = _json.loads(r.read().decode())
+        if coin not in data:
+            return f"No data for {coin!r}. Try the full coin id (e.g. 'bitcoin' not 'btc')."
+        info = data[coin]
+        price = info.get("usd")
+        change = info.get("usd_24h_change")
+        out = f"{coin}: ${price:,.2f} USD"
+        if change is not None:
+            sign = "+" if change >= 0 else ""
+            out += f" ({sign}{change:.2f}% 24h)"
+        return out
+    except Exception as e:
+        return f"CoinGecko error: {e}"
+
+
+def _convert_currency(amount: float, from_code: str, to_code: str) -> str:
+    """Free FX rates from open.er-api.com (no key, daily updates)."""
+    import urllib.request, json as _json
+    f = (from_code or "").strip().upper()
+    t = (to_code or "").strip().upper()
+    if not f or not t:
+        return "Need both 'from' and 'to' currency codes."
+    try:
+        url = f"https://open.er-api.com/v6/latest/{f}"
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "newt"}), timeout=6) as r:
+            data = _json.loads(r.read().decode())
+        if data.get("result") != "success":
+            return f"FX lookup failed: {data.get('error-type', 'unknown')}"
+        rate = data["rates"].get(t)
+        if rate is None:
+            return f"No rate for {t!r} from {f!r}."
+        converted = amount * rate
+        return f"{amount:,.2f} {f} ≈ {converted:,.2f} {t} (rate {rate:.4f})"
+    except Exception as e:
+        return f"Currency error: {e}"
+
+
+def _get_news_headlines(limit: int = 5) -> str:
+    """BBC RSS — same source as the daily briefing's top headline, but more."""
+    import urllib.request
+    from xml.etree import ElementTree as ET
+    try:
+        req = urllib.request.Request(
+            "https://feeds.bbci.co.uk/news/rss.xml",
+            headers={"User-Agent": "curl/8"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as r:
+            data = r.read()
+        root = ET.fromstring(data)
+        titles = []
+        for item in root.iter("item"):
+            t = item.find("title")
+            if t is not None and t.text:
+                titles.append(t.text.strip())
+            if len(titles) >= max(1, int(limit)):
+                break
+        if not titles:
+            return "No headlines available."
+        return "\n".join(f"- {h}" for h in titles)
+    except Exception as e:
+        return f"News error: {e}"
+
+
+def _define_word(word: str) -> str:
+    """Free dictionaryapi.dev — no key needed."""
+    import urllib.request, json as _json
+    word = (word or "").strip().lower()
+    if not word:
+        return "What word should I define?"
+    try:
+        url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{urllib.parse.quote(word)}"
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "newt"}), timeout=5) as r:
+            data = _json.loads(r.read().decode())
+        if not isinstance(data, list) or not data:
+            return f"No definition found for {word!r}."
+        entry = data[0]
+        out_lines = [f"**{entry.get('word', word)}**"]
+        for meaning in (entry.get("meanings") or [])[:3]:
+            pos = meaning.get("partOfSpeech", "")
+            defs = meaning.get("definitions") or []
+            for d in defs[:2]:
+                text = d.get("definition", "").strip()
+                if text:
+                    out_lines.append(f"  ({pos}) {text}")
+        return "\n".join(out_lines) if len(out_lines) > 1 else f"No definition for {word!r}."
+    except Exception as e:
+        return f"Dictionary error: {e}"
+
+
+def _now_playing_mac() -> str:
+    """Ask Spotify, then Apple Music, what's playing."""
+    # Spotify first
+    ok, out = _run_osascript('''
+        tell application "System Events"
+            if exists (process "Spotify") then
+                tell application "Spotify"
+                    if player state is playing then
+                        return (artist of current track) & " — " & (name of current track) & " (Spotify)"
+                    end if
+                end tell
+            end if
+        end tell
+        return ""
+    ''', timeout=4)
+    if ok and out and out.strip():
+        return out.strip()
+
+    # Apple Music
+    ok, out = _run_osascript('''
+        tell application "System Events"
+            if exists (process "Music") then
+                tell application "Music"
+                    if player state is playing then
+                        return (artist of current track) & " — " & (name of current track) & " (Apple Music)"
+                    end if
+                end tell
+            end if
+        end tell
+        return ""
+    ''', timeout=4)
+    if ok and out and out.strip():
+        return out.strip()
+
+    return "Nothing playing on Mac right now."
+
+
+def _safe_eval_math(expr: str) -> str:
+    """Tiny safe-ish math evaluator. Allows numbers, basic ops, and a few funcs."""
+    import math
+    expr = expr.strip()
+    if not expr:
+        return "Empty expression."
+    # Translate human-friendly forms
+    expr = re.sub(r"(\d+(?:\.\d+)?)\s*%\s*of\s*(\d+(?:\.\d+)?)",
+                  r"(\1/100)*\2", expr, flags=re.IGNORECASE)
+    expr = expr.replace("^", "**").replace("×", "*").replace("÷", "/")
+    allowed_names = {"sqrt": math.sqrt, "pi": math.pi, "e": math.e,
+                     "log": math.log, "ln": math.log, "sin": math.sin,
+                     "cos": math.cos, "tan": math.tan, "abs": abs,
+                     "round": round, "min": min, "max": max, "pow": pow}
+    # Reject obvious unsafe constructs
+    if re.search(r"[A-Za-z_][A-Za-z0-9_]*", expr):
+        # only allow names from allowed set
+        for name in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", expr):
+            if name not in allowed_names:
+                return f"Unknown name: {name}"
+    if any(bad in expr for bad in ("import", "__", "open(", "exec", "eval", ";", "lambda")):
+        return "Refused (unsafe expression)."
+    try:
+        result = eval(expr, {"__builtins__": {}}, allowed_names)
+        return f"{expr} = {result}"
+    except Exception as e:
+        return f"Math error: {e}"
+
+
+def _read_recent_notes(limit: int = 10) -> str:
+    p = Path(NOTES_FILE)
+    if not p.exists():
+        return "No notes saved yet."
+    try:
+        lines = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        recent = lines[-max(1, int(limit)):]
+        return "\n".join(recent) if recent else "No notes."
+    except Exception as e:
+        return f"Couldn't read notes: {e}"
+
+
+def _execute_agent_tool(name: str, args: dict) -> str:
+    """Run a tool and return its result as a string for the LLM to read."""
+    try:
+        if name == "web_search":
+            return _agent_web_search(str(args.get("query", "")))
+        if name == "find_files":
+            return _find_files(str(args.get("query", "")))
+        if name == "list_directory":
+            folder = str(args.get("folder", ""))
+            target = _resolve_dir_alias(folder) or _safe_path(folder)
+            if target is None or not target.exists():
+                return f"Folder not found: {folder!r}"
+            text, _ = _list_dir(target)
+            return text
+        if name == "get_weather":
+            return _fetch_weather() or "Weather unavailable."
+        if name == "read_notes":
+            return _read_recent_notes(int(args.get("limit", 10)))
+        if name == "save_note":
+            content = str(args.get("content", "")).strip()
+            if not content:
+                return "Empty note — nothing to save."
+            return "Note saved." if _save_note(content) else "Failed to save note."
+        if name == "get_persona":
+            p = _read_persona()
+            return (f"Tone: {p.get('tone', 'warm')}\n"
+                    f"Facts: {p.get('facts', []) or '(none)'}")
+        if name == "read_running_apps":
+            return _frontmost_app() or "Couldn't read frontmost app."
+        if name == "get_crypto_price":
+            return _get_crypto_price(str(args.get("coin", "")))
+        if name == "get_time":
+            return datetime.now().strftime("%A, %B %-d, %Y at %-I:%M %p")
+        if name == "calculate":
+            return _safe_eval_math(str(args.get("expression", "")))
+        if name == "convert_currency":
+            return _convert_currency(
+                float(args.get("amount", 0)),
+                str(args.get("from", "")),
+                str(args.get("to", "")),
+            )
+        if name == "get_news_headlines":
+            return _get_news_headlines(int(args.get("limit", 5)))
+        if name == "define_word":
+            return _define_word(str(args.get("word", "")))
+        if name == "now_playing":
+            return _now_playing_mac()
+
+        # ---- Action tools — return dict with both 'text' and 'action' ----
+        if name == "set_reminder":
+            title = str(args.get("title", "")).strip()
+            due   = args.get("due_iso")
+            if not title:
+                return "Need a title for the reminder."
+            payload = {"title": title}
+            if isinstance(due, str) and due.strip():
+                payload["due"] = due.strip()
+            return {
+                "text": f"Reminder queued: {title!r}" + (f" at {due}" if due else ""),
+                "action": {"create_reminder": payload},
+            }
+
+        if name == "start_timer":
+            try:
+                seconds = int(args.get("seconds", 0))
+            except Exception:
+                seconds = 0
+            label = str(args.get("label", f"{seconds} seconds")).strip()
+            if seconds <= 0:
+                return "Need a positive duration."
+            return {
+                "text": f"Timer queued for {label}.",
+                "action": {"start_timer": {"seconds": seconds, "label": label}},
+            }
+
+        if name == "compose_message":
+            recipient = str(args.get("recipient", "")).strip()
+            body      = str(args.get("body", "")).strip()
+            if not recipient or not body:
+                return "Need both recipient and body."
+            return {
+                "text": f"Message draft to {recipient}: {body!r}",
+                "action": {"compose_sms": {"recipient": recipient, "body": body}},
+            }
+
+        if name == "create_calendar_event":
+            title = str(args.get("title", "")).strip()
+            start = args.get("start")
+            end   = args.get("end")
+            location = args.get("location")
+            if not title or not isinstance(start, str) or not start.strip():
+                return "Need title and start time."
+            payload = {"title": title, "start": start}
+            if isinstance(end, str) and end.strip():       payload["end"] = end
+            if isinstance(location, str) and location.strip(): payload["location"] = location
+            return {
+                "text": f"Event queued: {title!r} at {start}.",
+                "action": {"create_event": payload},
+            }
+    except Exception as e:
+        return f"Error executing {name}: {e}"
+    return f"Unknown tool: {name}"
+
+
+# ---------------------------------------------------------------------------
 # Web search — returns a search URL action (opens DuckDuckGo on the phone)
 # ---------------------------------------------------------------------------
 
@@ -1349,28 +1899,23 @@ def register_routes(app):
             "size": target.stat().st_size,
         })
 
-    # --- POST /vision — describe an image via the OpenAI Vision API -------
+    # --- POST /vision — describe an image via Groq's vision model --------
     @app.route("/vision", methods=["POST"], endpoint="newt_vision")
     def _newt_vision():
-        try:
-            from openai import OpenAI
-        except ImportError:
-            return _jsonify({"error": "openai package not installed"}), 500
-
         if "file" not in _req.files:
             return _jsonify({"error": "no file in request"}), 400
         f = _req.files["file"]
         prompt = _req.form.get("prompt") or "What's in this image? Be concise."
 
-        # Read image bytes and base64-encode for the OpenAI API
+        # Read image bytes and base64-encode for the API
         img_bytes = f.read()
         b64 = base64.b64encode(img_bytes).decode("ascii")
         mime = f.mimetype or "image/jpeg"
 
         try:
-            client = OpenAI()  # uses OPENAI_API_KEY from env / .env
+            client = _groq_client()
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=GROQ_VISION_MODEL,
                 messages=[
                     {
                         "role": "user",
@@ -1387,6 +1932,191 @@ def register_routes(app):
             return _jsonify({"reply": answer.strip()})
         except Exception as e:
             return _jsonify({"error": f"vision call failed: {e}"}), 500
+
+    # --- POST /chat/stream — Server-Sent Events streaming chat -----------
+    # Routes intent matches to a single chunk; otherwise streams from OpenAI.
+    @app.route("/chat/stream", methods=["POST"], endpoint="newt_chat_stream")
+    def _newt_chat_stream():
+        from flask import Response, stream_with_context
+        import json as _json
+
+        data = _req.get_json(silent=True) or {}
+        text = (data.get("prompt") or data.get("message") or data.get("text") or "").strip()
+        if not text:
+            return _jsonify({"error": "no prompt"}), 400
+
+        # If an intent matches, deliver the reply as one chunk + done.
+        intent = handle_message(text)
+        if intent is not None:
+            def gen_intent():
+                payload = _json.dumps({
+                    "chunk": intent.get("reply", ""),
+                    "action": intent.get("action"),
+                })
+                yield f"data: {payload}\n\n"
+                yield "data: [DONE]\n\n"
+            return Response(stream_with_context(gen_intent()),
+                            mimetype="text/event-stream",
+                            headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
+
+        # Otherwise stream from Groq.
+        persona = system_prompt_prefix().strip()
+        sys_prompt = persona if persona else \
+            "You are Newt, Ethan's voice assistant. Be concise, warm, and useful."
+
+        # Conversation context — phone passes the last N turns so Newt can
+        # answer follow-ups like "what about tomorrow" after "what's on
+        # my calendar today".
+        history_in = data.get("history", [])
+        prior_messages = []
+        if isinstance(history_in, list):
+            for h in history_in[-12:]:   # keep it bounded
+                if not isinstance(h, dict):
+                    continue
+                role = h.get("role")
+                content = h.get("content")
+                if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+                    prior_messages.append({"role": role, "content": content})
+
+        def gen_llm():
+            """Agentic chat with Groq.
+            Strategy: non-streaming tool-using turns (more reliable on Groq's
+            Llama models), then chunk the final text reply for streaming-feel.
+            """
+            messages = [
+                {"role": "system", "content": sys_prompt},
+                *prior_messages,
+                {"role": "user",   "content": text},
+            ]
+            client = _groq_client()
+
+            def _stream_text(s):
+                """Break a final text reply into ~25-char chunks so the iOS
+                bubble grows visibly even though the call wasn't streamed."""
+                if not s:
+                    return
+                step = 25
+                for i in range(0, len(s), step):
+                    yield f"data: {_json.dumps({'chunk': s[i:i+step]})}\n\n"
+
+            try:
+                for iteration in range(5):
+                    # Non-streaming so we can reliably parse tool calls
+                    kwargs = dict(
+                        model=GROQ_CHAT_MODEL,
+                        messages=messages,
+                        max_tokens=700,
+                    )
+                    if iteration < 4:
+                        kwargs["tools"] = AGENT_TOOLS
+                        kwargs["parallel_tool_calls"] = False  # one tool at a time = more reliable
+
+                    try:
+                        response = client.chat.completions.create(**kwargs)
+                        msg = response.choices[0].message
+                        tool_calls = getattr(msg, "tool_calls", None) or []
+                    except Exception as api_err:
+                        # Groq sometimes generates Llama-native tool format that its
+                        # OpenAI-shim parser rejects. We can recover the tool call
+                        # from the error message and continue.
+                        err_str = str(api_err)
+                        if "tool_use_failed" in err_str or "failed_generation" in err_str:
+                            name, args = _parse_llama_tool_call(err_str)
+                            if name:
+                                badge = _friendly_tool_badge([name])
+                                yield f"data: {_json.dumps({'tool': badge})}\n\n"
+                                result = _execute_agent_tool(name, args)
+
+                                if isinstance(result, dict):
+                                    if result.get("action"):
+                                        yield f"data: {_json.dumps({'action': result['action']})}\n\n"
+                                    text_result = str(result.get("text", ""))[:4000]
+                                else:
+                                    text_result = str(result)[:4000]
+
+                                fake_id = f"call_recover_{iteration}"
+                                messages.append({
+                                    "role": "assistant",
+                                    "content": "",
+                                    "tool_calls": [{
+                                        "id": fake_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": name,
+                                            "arguments": _json.dumps(args),
+                                        },
+                                    }],
+                                })
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": fake_id,
+                                    "content": text_result,
+                                })
+                                continue  # try the next iteration with the result
+                        # Other errors — bubble up
+                        raise
+
+                    if not tool_calls:
+                        # Final reply — chunk-stream it back to the client
+                        yield from _stream_text(msg.content or "")
+                        break
+
+                    # Tools were requested — show a friendly progress badge
+                    names = [tc.function.name for tc in tool_calls]
+                    badge = _friendly_tool_badge(names)
+                    # Send as a separate field so iOS can render it differently
+                    # from regular text chunks.
+                    yield f"data: {_json.dumps({'tool': badge})}\n\n"
+
+                    # Append the assistant turn (must include tool_calls verbatim)
+                    messages.append({
+                        "role": "assistant",
+                        "content": msg.content or "",
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments or "{}",
+                                },
+                            }
+                            for tc in tool_calls
+                        ],
+                    })
+
+                    # Execute each tool and append its result
+                    for tc in tool_calls:
+                        try:
+                            args = _json.loads(tc.function.arguments) if tc.function.arguments else {}
+                        except Exception:
+                            args = {}
+                        result = _execute_agent_tool(tc.function.name, args)
+
+                        # Action-emitting tools return a dict; forward the
+                        # action to iOS via the SSE stream and feed the text
+                        # back to the LLM as the tool result.
+                        if isinstance(result, dict):
+                            if result.get("action"):
+                                yield f"data: {_json.dumps({'action': result['action']})}\n\n"
+                            text_result = str(result.get("text", ""))[:4000]
+                        else:
+                            text_result = str(result)[:4000]
+
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": text_result,
+                        })
+
+                yield "data: [DONE]\n\n"
+            except Exception as e:
+                yield f"data: {_json.dumps({'error': str(e)})}\n\n"
+                yield "data: [DONE]\n\n"
+
+        return Response(stream_with_context(gen_llm()),
+                        mimetype="text/event-stream",
+                        headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
 
     # --- GET / POST /persona — read or update the persona JSON -----------
     @app.route("/persona", methods=["GET"], endpoint="newt_persona_get")

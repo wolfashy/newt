@@ -220,7 +220,7 @@ struct ContentView: View {
                             ))
                     }
 
-                    if isThinking {
+                    if isThinking && store.streamingText == nil {
                         HStack {
                             TypingIndicator()
                                 .padding(.horizontal, 14)
@@ -231,6 +231,24 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, 16)
                         .id("thinking")
+                        .transition(.opacity)
+                    }
+
+                    if let badge = store.toolBadge, store.streamingText?.isEmpty ?? true {
+                        // Agentic tool indicator — "🔍 Searching the web…"
+                        ToolBadgeView(text: badge)
+                            .id("toolbadge")
+                            .transition(.opacity)
+                    }
+
+                    if let streaming = store.streamingText, !streaming.isEmpty {
+                        // In-progress streamed reply — looks like a normal Newt
+                        // bubble but updates word-by-word.
+                        MessageBubble(message: Message(
+                            text: streaming + "▍",   // caret to show it's still going
+                            isUser: false
+                        ))
+                        .id("streaming")
                         .transition(.opacity)
                     }
 
@@ -250,6 +268,13 @@ struct ContentView: View {
                 withAnimation(.easeOut(duration: 0.25)) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
+            }
+            .onChange(of: store.streamingText) { _ in
+                // Keep the in-progress bubble visible as it grows
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
+            .onChange(of: store.toolBadge) { _ in
+                proxy.scrollTo("bottom", anchor: .bottom)
             }
         }
     }
@@ -397,16 +422,49 @@ struct ContentView: View {
         isThinking = true
         isVoicePlaying = !settings.voiceMuted  // assume voice will play
 
-        NetworkManager.shared.sendMessage(userMessage) { [self] reply, action in
-            isThinking = false
-            store.append(Message(text: reply, isUser: false))
-            if action == nil && reply.lowercased().contains("error") {
-                Haptics.error()
+        if settings.streamingEnabled {
+            // Streaming path — show in-progress bubble that grows as chunks arrive
+            store.beginStreaming()
+
+            // Pass the last 10 turns as context so Newt can answer
+            // follow-up questions ("what about tomorrow", "and the next one")
+            let recent = Array(store.messages.suffix(11).dropLast())  // exclude the just-appended user msg
+            let history: [(role: String, content: String)] = recent.map {
+                (role: $0.isUser ? "user" : "assistant", content: $0.text)
             }
-            handleAction(action)
-            // Sample isSpeaking shortly after to keep the stop button accurate
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                isVoicePlaying = network.isSpeaking
+
+            NetworkManager.shared.sendMessageStreaming(
+                userMessage,
+                history: history,
+                onChunk: { [self] chunk in
+                    isThinking = false   // first chunk arrived, hide typing dots
+                    store.appendChunk(chunk)
+                },
+                onToolBadge: { [self] badge in
+                    isThinking = false
+                    store.setToolBadge(badge)
+                },
+                onComplete: { [self] action in
+                    isThinking = false
+                    store.commitStreaming()
+                    handleAction(action)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        isVoicePlaying = network.isSpeaking
+                    }
+                }
+            )
+        } else {
+            // Non-streaming path (existing behavior)
+            NetworkManager.shared.sendMessage(userMessage) { [self] reply, action in
+                isThinking = false
+                store.append(Message(text: reply, isUser: false))
+                if action == nil && reply.lowercased().contains("error") {
+                    Haptics.error()
+                }
+                handleAction(action)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isVoicePlaying = network.isSpeaking
+                }
             }
         }
     }
@@ -673,6 +731,41 @@ struct MessageBubble: View {
         f.timeStyle = .short
         return f
     }()
+}
+
+// MARK: - Tool badge (shown while agentic loop runs a tool)
+
+struct ToolBadgeView: View {
+    let text: String
+    @State private var pulse = false
+
+    var body: some View {
+        HStack {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Theme.accent.opacity(0.7))
+                    .frame(width: 6, height: 6)
+                    .scaleEffect(pulse ? 1.4 : 1.0)
+                    .opacity(pulse ? 0.5 : 1.0)
+                    .animation(
+                        .easeInOut(duration: 0.9).repeatForever(autoreverses: true),
+                        value: pulse
+                    )
+                Text(text)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(
+                Capsule()
+                    .fill(Theme.bubbleAI.opacity(0.6))
+            )
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .onAppear { pulse = true }
+    }
 }
 
 // MARK: - Floating leaf (empty state)

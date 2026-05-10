@@ -10,6 +10,9 @@ final class NewtSettings: ObservableObject {
     @Published var hapticsEnabled: Bool {
         didSet { UserDefaults.standard.set(hapticsEnabled, forKey: "newt.haptics") }
     }
+    @Published var streamingEnabled: Bool {
+        didSet { UserDefaults.standard.set(streamingEnabled, forKey: "newt.streaming") }
+    }
     @Published var defaultDevice: String {  // "ios" or "mac"
         didSet { UserDefaults.standard.set(defaultDevice, forKey: "newt.defaultDevice") }
     }
@@ -22,10 +25,11 @@ final class NewtSettings: ObservableObject {
 
     init() {
         let d = UserDefaults.standard
-        self.voiceMuted     = d.bool(forKey: "newt.voiceMuted")
-        self.hapticsEnabled = d.object(forKey: "newt.haptics") as? Bool ?? true
-        self.defaultDevice  = d.string(forKey: "newt.defaultDevice") ?? "ios"
-        self.serverHost     = d.string(forKey: "newt.serverHost") ?? ""
+        self.voiceMuted        = d.bool(forKey: "newt.voiceMuted")
+        self.hapticsEnabled    = d.object(forKey: "newt.haptics") as? Bool ?? true
+        self.streamingEnabled  = d.object(forKey: "newt.streaming") as? Bool ?? true
+        self.defaultDevice     = d.string(forKey: "newt.defaultDevice") ?? "ios"
+        self.serverHost        = d.string(forKey: "newt.serverHost") ?? ""
     }
 }
 
@@ -45,6 +49,13 @@ struct SettingsView: View {
                 Section("Voice") {
                     Toggle("Mute Newt's voice", isOn: $settings.voiceMuted)
                     Toggle("Haptics", isOn: $settings.hapticsEnabled)
+                }
+
+                Section("Chat") {
+                    Toggle("Stream replies", isOn: $settings.streamingEnabled)
+                    Text("Newt's text replies appear word-by-word as they generate. Faster perceived response.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Default device for \"open X\"") {
